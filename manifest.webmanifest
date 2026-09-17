@@ -1,0 +1,25 @@
+{
+  "id": "./",
+  "name": "Daily Report",
+  "short_name": "Daily Report",
+  "description": "Laporan pekerjaan Chicken Crush",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101a35",
+  "theme_color": "#c90014",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

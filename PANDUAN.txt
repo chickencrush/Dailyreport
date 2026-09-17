@@ -1,0 +1,12 @@
+PAKET KHUSUS GITHUB PAGES
+
+1. Ekstrak ZIP ini.
+2. Buka repository Dailyreport > Add file > Upload files.
+3. Unggah SEMUA file hasil ekstrak langsung ke akar repository, lalu Commit changes. Jangan unggah ZIP.
+4. Pastikan ada index.html huruf kecil, app.js, config.js, sw.js, manifest.webmanifest serta icon-180.png, icon-192.png, icon-512.png.
+5. Settings > Pages > Deploy from a branch > main > /(root) > Save.
+6. Setelah deployment berhasil, buka https://chickencrush.github.io/Dailyreport/ dan muat ulang.
+
+File Index.html huruf besar dan Code.gs lama adalah sumber Apps Script. Biarkan file tersebut; entry GitHub Pages memakai index.html huruf kecil dari paket ini. Jangan tempel index.html paket ini ke HTML Apps Script.
+URL /exec Daily Report sudah diisi. Ikon memakai logo yang Anda kirim.
+Jika error Google muncul dalam aplikasi, gunakan Buka langsung; akses deployment/sesi Google masih perlu diperiksa.
