@@ -9,3 +9,6 @@
 PWA membungkus web app Apps Script dalam iframe. Backend dan data tetap menggunakan deployment lama. Bila autentikasi Google atau kebijakan browser menghalangi iframe, gunakan Buka langsung. Kegagalan akses Google di Android perlu diselesaikan pada URL /exec; PWA tidak memperbaiki izin deployment atau konflik akun Google.
 
 Launcher tersedia offline; laporan, login dan perubahan data memerlukan internet. Ini PWA, bukan installer EXE/APK/IPA maupun publikasi App Store. Keberhasilan instalasi dan sesi dalam iframe perlu diuji setelah URL sebenarnya dan hosting tersedia.
+
+## Jika muncul 404
+Paket ini memiliki index.html huruf kecil di akar yang mengarahkan ke docs/. Unggah index.html ini ke akar repository. Jangan mengganti Index.html huruf besar untuk Apps Script. Pages dapat memakai main /root atau main /docs. Pastikan folder docs berada langsung di akar, bukan dalam folder tambahan. Pilih Visit site dari Settings > Pages setelah deployment berhasil.
