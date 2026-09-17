@@ -363,3 +363,21 @@ function dateTime_(v){if(!v)return'';if(v instanceof Date)return Utilities.forma
 function durationText_(ms){if(ms<0)ms=0;const min=Math.floor(ms/60000),d=Math.floor(min/1440),h=Math.floor((min%1440)/60),m=min%60;return(d?d+'h ':'')+(h?h+'j ':'')+m+'m';}
 function audit_(action,entity,id,detail){try{const u=Session.getActiveUser().getEmail()||'system';const users=getSheetObjects_(CONFIG.SHEETS.USERS);const me=users.find(x=>String(x.EMAIL||'').toLowerCase()===String(u).toLowerCase());getDb_().getSheetByName(CONFIG.SHEETS.AUDIT).appendRow([new Date(),u,me?String(me.NAME||u):u,action,entity,id,detail]);}catch(e){}}
 function styleSheet_(sh){if(!sh)return;sh.setFrozenRows(1);const last=sh.getLastColumn();if(last){sh.getRange(1,1,1,last).setFontWeight('bold').setBackground('#172554').setFontColor('#ffffff');sh.autoResizeColumns(1,last);}}
+
+// Public JSON endpoint. Only explicitly listed operations are reachable.
+function doPost(e){
+  try{
+    if(!e||!e.postData||!e.postData.contents)throw new Error('Permintaan kosong.');
+    var req=JSON.parse(e.postData.contents);
+    if(!req||typeof req.action!=='string'||!Array.isArray(req.args))throw new Error('Permintaan tidak valid.');
+    var routes={loginUser:loginUser,registerUser:registerUser,getPublicDivisions:getPublicDivisions,
+      restoreSession:restoreSession,logoutUser:logoutUser,changeMyPassword:changeMyPassword,
+      getBootstrapData:getBootstrapData,getDashboardData:getDashboardData,getReports:getReports,
+      getReportDetail:getReportDetail,saveReport:saveReport,updateReportStatus:updateReportStatus,
+      addReportNote:addReportNote,listUsers:listUsers,saveUser:saveUser,listDivisions:listDivisions,
+      saveDivision:saveDivision,getAuditLogs:getAuditLogs,exportReportsPdf:exportReportsPdf,exportReportsXlsx:exportReportsXlsx};
+    if(!Object.prototype.hasOwnProperty.call(routes,req.action))throw new Error('Operasi tidak tersedia.');
+    return apiJson_({ok:true,data:routes[req.action].apply(null,req.args)});
+  }catch(err){return apiJson_({ok:false,error:String(err.message||err)});}
+}
+function apiJson_(value){return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);}

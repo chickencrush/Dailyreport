@@ -1,1 +1,6 @@
-Ganti SELURUH isi Code.gs DAN Index.html. Simpan > Deploy > Manage deployments > Edit > New version > Deploy. Panduan status dan GitHub: README.md.
+WAJIB UPDATE BACKEND DAN GITHUB
+
+1. Apps Script: ganti Code.gs dan Index.html huruf besar. Deploy New version, Execute as Me, akses Anyone.
+2. GitHub: unggah isi ZIP ke akar Dailyreport. Pages main /(root).
+3. Buka https://chickencrush.github.io/Dailyreport/ dan reload.
+Panduan lengkap: README.md.

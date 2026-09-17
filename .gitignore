@@ -1,4 +1,3 @@
 node_modules/
 .clasp.json
 .env*
-.DS_Store

@@ -1,16 +1,29 @@
-# Chicken Crush Daily Report
+# Daily Report API PWA
 
-## Status dan bukti
-Laporan baru selalu Hold. Klik Mulai Proses untuk pindah ke Proses. Klik Selesaikan, isi link foto Google Drive, lalu Kirim Bukti & Selesaikan. Selesai adalah tahap akhir; perubahan mundur dan melompati tahap ditolak backend. Laporan lama mempertahankan status dan data. Bukti disimpan di kolom EVIDENCE_URL yang ditambahkan otomatis; lampiran DRIVE_URL tetap ada.
-Link harus berupa HTTPS drive.google.com/file/d/ID atau open/uc dengan id. Sistem memeriksa format link, bukan isi foto atau izin berbagi. Pastikan foto dapat dibuka pemeriksa.
+## 1. Update Apps Script (wajib dahulu)
+- Buka project Daily Report yang lama.
+- Ganti seluruh isi file Script Code.gs/Kode.gs dengan Code.gs paket ini. Pastikan hanya satu file backend berisi fungsi yang sama.
+- Ganti seluruh isi HTML Index dengan Index.html huruf besar paket ini. File ini mempertahankan akses langsung /exec.
+- Konfigurasi spreadsheet dan email admin sudah terisi. Database lama tidak perlu setupApp ulang.
+- Simpan. Deploy > Manage deployments > Edit > New version.
+- Execute as: Me. Who has access: Anyone (bukan hanya pengguna yang login akun Google). API memakai login internal dan token aplikasi untuk membatasi data. Bila Anyone tidak tersedia karena kebijakan organisasi, API langsung dari GitHub ini memerlukan hosting/proxy lain.
+- Deploy. Pertahankan deployment yang sama agar URL lama tidak berubah. Jika URL berubah, update config.js di GitHub.
 
-## Pasang update
-Ganti SELURUH isi Code.gs dan Index.html dalam project Apps Script lama. Simpan > Deploy > Manage deployments > Edit > New version > Deploy. Tidak perlu setupApp ulang jika database sudah berjalan. Buka URL /exec.
+## 2. Update GitHub
+Unggah file hasil ekstrak langsung ke akar repository Dailyreport. index.html HURUF KECIL adalah aplikasi GitHub; Index.html HURUF BESAR untuk Apps Script.
+File web yang wajib: index.html, config.js, sw.js, manifest.webmanifest, icon-180.png, icon-192.png, icon-512.png. Paket juga menyertakan backend dan tes.
+Settings > Pages > Deploy from a branch > main > /(root) > Save.
+Halaman aplikasi: https://chickencrush.github.io/Dailyreport/
+Jika halaman pembungkus lama masih terlihat, Chrome PC: Ctrl+Shift+R. Jika masih tertahan service worker lama, DevTools > Application > Service Workers > Unregister, lalu reload. Versi service worker baru menghapus cache Daily Report lama setelah aktif.
 
-## Upload ke GitHub
-Ekstrak ZIP. Buat repository > Add file > Upload files > unggah isi paket. Git atau GitHub Desktop dapat digunakan agar folder .github ikut terunggah. Jangan commit .clasp.json atau kredensial.
-GitHub menyimpan sumber; GitHub Pages tidak menjalankan backend Apps Script. Aplikasi tetap diakses dari /exec.
-Opsional: gunakan clasp untuk sinkronisasi project Apps Script; .claspignore membatasi file yang dikirim ke Code.gs, Index.html dan appsscript.json.
+## 3. Pasang
+PC Chrome/Edge atau Android Chrome: tombol Pasang Daily Report atau menu browser > Pasang aplikasi. iOS Safari: Bagikan > Tambahkan ke Layar Utama. Ikon menggunakan logo yang diberikan.
 
-## Pemeriksaan
-npm test memeriksa simulasi frontend/backend, status berurutan, bukti wajib, penolakan akses laporan orang lain dan waktu selesai. Deployment Google dan perangkat fisik belum diuji.
+## Cara kerja
+Frontend dimuat dari GitHub Pages tanpa iframe. Backend mengembalikan JSON dari doPost; frontend mengirim POST text/plain dan mengikuti redirect Google. Token/password tidak dikirim di URL. Data pengguna tetap memakai otorisasi backend. Operasi backend dibatasi daftar API yang eksplisit; setupApp dan helper privat tidak dapat dipanggil melalui API.
+Status laporan baru Hold > Proses > Selesai. Link file foto Google Drive wajib saat selesai; format diperiksa, izin akses/isi foto tidak diverifikasi. Bukti disimpan terpisah dari lampiran.
+Backend tidak dicache service worker. Data laporan, login, upload dan export memerlukan internet. Shell aplikasi dapat dimuat offline.
+
+## Pengujian
+npm test mencakup sintaks, simulasi frontend, daftar/login backend, status, bukti, hak akses, whitelist API, token POST dan penanganan error. Browser lintas origin, redirect/CORS pada deployment Google nyata dan instalasi perangkat fisik belum diuji. Jika koneksi API gagal, cek akses Anyone dan versi deployment terlebih dahulu. Jangan gunakan mode no-cors, karena respons tidak dapat dibaca.
+Referensi API: https://developers.google.com/apps-script/guides/content
