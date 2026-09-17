@@ -20,7 +20,7 @@ Jika halaman pembungkus lama masih terlihat, Chrome PC: Ctrl+Shift+R. Jika masih
 PC Chrome/Edge atau Android Chrome: tombol Pasang Daily Report atau menu browser > Pasang aplikasi. iOS Safari: Bagikan > Tambahkan ke Layar Utama. Ikon menggunakan logo yang diberikan.
 
 ## Cara kerja
-Frontend dimuat dari GitHub Pages tanpa iframe. Backend mengembalikan JSON dari doPost; frontend mengirim POST text/plain dan mengikuti redirect Google. Token/password tidak dikirim di URL. Data pengguna tetap memakai otorisasi backend. Operasi backend dibatasi daftar API yang eksplisit; setupApp dan helper privat tidak dapat dipanggil melalui API.
+Frontend dimuat dari GitHub Pages tanpa iframe. Kedua file HTML mendeteksi konteks: ketika berjalan di /exec, koneksi memakai google.script.run; di GitHub, koneksi memakai API POST. Backend mengembalikan JSON dari doPost; frontend mengirim POST text/plain dan mengikuti redirect Google. Token/password tidak dikirim di URL. Data pengguna tetap memakai otorisasi backend. Operasi backend dibatasi daftar API yang eksplisit; setupApp dan helper privat tidak dapat dipanggil melalui API.
 Status laporan baru Hold > Proses > Selesai. Link file foto Google Drive wajib saat selesai; format diperiksa, izin akses/isi foto tidak diverifikasi. Bukti disimpan terpisah dari lampiran.
 Backend tidak dicache service worker. Data laporan, login, upload dan export memerlukan internet. Shell aplikasi dapat dimuat offline.
 

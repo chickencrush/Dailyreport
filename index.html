@@ -90,10 +90,17 @@ let deferredInstallPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;});
 async function call(fn,...args){
   if(!PUBLIC_CALLS.has(fn)&&state.token)args.push(state.token);
+  if(window.google&&window.google.script&&window.google.script.run){
+    return new Promise((resolve,reject)=>{
+      let settled=false;const timeout=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Koneksi terlalu lama. Periksa internet dan muat ulang laporan.'));}},90000);
+      const done=(error,value)=>{if(settled)return;settled=true;clearTimeout(timeout);if(error){const message=error.message||String(error);if(/sesi|login kembali/i.test(message)){clearToken();$('appShell').classList.add('hidden');$('authScreen').classList.remove('hidden');}reject(new Error(message));}else resolve(value);};
+      try{window.google.script.run.withSuccessHandler(value=>done(null,value)).withFailureHandler(error=>done(error))[fn](...args);}catch(error){done(error);}
+    });
+  }
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
   try{
     if(!navigator.onLine)throw new Error('Tidak ada koneksi internet.');
-    const response=await fetch(window.DAILY_REPORT_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({action:fn,args}),redirect:'follow',credentials:'omit',signal:controller.signal});
+    const response=await fetch(window.DAILY_REPORT_URL||'https://script.google.com/macros/s/AKfycbz94wl1Sg5SiEvnxd0UH5AFMNSSAla63BWHdHYPJ1bJOq0c9K2Pk7sTv4aWjIyqhSj0/exec',{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({action:fn,args}),redirect:'follow',credentials:'omit',signal:controller.signal});
     if(!response.ok)throw new Error('Server tidak dapat diakses. Periksa deployment.');
     const text=await response.text();let result;
     try{result=JSON.parse(text);}catch(e){throw new Error('Server belum memakai API terbaru atau akses belum Anyone. Perbarui deployment Apps Script.');}
@@ -189,4 +196,4 @@ function updateDailyMotivation(){const parts=new Intl.DateTimeFormat('en-CA',{ti
 updateDailyMotivation();setInterval(updateDailyMotivation,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateDailyMotivation()});
 
 $('quickForm').addEventListener('submit',e=>{e.preventDefault();submitForm('q')});$('fullForm').addEventListener('submit',e=>{e.preventDefault();submitForm('f')});startApp().catch(e=>{showLoader(false);$('authScreen').classList.remove('hidden');$('appShell').classList.add('hidden');showAuthError('loginError',e.message||'Aplikasi gagal dimuat. Silakan muat ulang.');});
-</script><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});</script></body></html>
+</script><script>if(!(window.google&&window.google.script)&&'serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});</script></body></html>
