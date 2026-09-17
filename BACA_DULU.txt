@@ -1,6 +1,6 @@
-WAJIB UPDATE BACKEND DAN GITHUB
+UPDATE GAMBAR HALAMAN LOGIN
 
-1. Apps Script: ganti Code.gs dan Index.html huruf besar. Deploy New version, Execute as Me, akses Anyone.
-2. GitHub: unggah isi ZIP ke akar Dailyreport. Pages main /(root).
-3. Buka https://chickencrush.github.io/Dailyreport/ dan reload.
-Panduan lengkap: README.md.
+GitHub: ganti index.html (huruf kecil) dan sw.js dari paket ini, commit lalu tunggu Pages selesai. Muat ulang halaman.
+Apps Script jika juga memakai /exec langsung: ganti isi Index.html (huruf besar), Simpan > Deploy > Manage deployments > Edit > New version > Deploy.
+Code.gs dan konfigurasi koneksi tidak berubah dari paket API PWA sebelumnya.
+Gambar ayam tertanam dalam HTML, tidak perlu upload gambar terpisah.
