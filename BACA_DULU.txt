@@ -1,0 +1,1 @@
+Ganti SELURUH isi Code.gs DAN Index.html. Simpan > Deploy > Manage deployments > Edit > New version > Deploy. Panduan status dan GitHub: README.md.
