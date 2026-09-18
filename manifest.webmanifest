@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Daily Report",
-  "short_name": "Daily Report",
+  "name": "CrushOps",
+  "short_name": "CrushOps",
   "description": "Laporan pekerjaan Chicken Crush",
   "start_url": "./",
   "scope": "./",
