@@ -1,25 +1,14 @@
 {
-  "id": "./",
-  "name": "CrushOps",
+  "name": "CrushOps — Chicken Crush",
   "short_name": "CrushOps",
-  "description": "Laporan pekerjaan Chicken Crush",
-  "start_url": "./",
-  "scope": "./",
+  "description": "Platform internal pelaporan, presensi, dan monitoring aktivitas kerja.",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#101a35",
+  "background_color": "#0b1120",
   "theme_color": "#c90014",
+  "scope": "/",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/sata1.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
