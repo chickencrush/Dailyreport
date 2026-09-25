@@ -3,7 +3,7 @@
  * Route: POST /api → diteruskan ke Google Apps Script
  */
 
-const GAS_URL = 'https://script.google.com/macros/s/GANTI_DENGAN_ID_DEPLOYMENT_ANDA/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbz94wl1Sg5SiEvnxd0UH5AFMNSSAla63BWHdHYPJ1bJOq0c9K2Pk7sTv4aWjIyqhSj0/exec';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
