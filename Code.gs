@@ -20,6 +20,44 @@ const CONFIG = {
 const STATUS = ['Selesai', 'Proses', 'Hold'];
 const ROLES = ['USER', 'ADMIN', 'SUPER_ADMIN'];
 
+// Kolom tambahan pada USERS & REPORTS untuk modul profil, reset password, dan bukti laporan.
+const USER_EXTRA_HEADERS_ = ['RESET_CODE_HASH','RESET_EXPIRES_AT','PHOTO_URL'];
+const REPORT_EXTRA_HEADER_ = 'EVIDENCE_URL';
+
+// Sheet modul tambahan (kalender/meeting, presensi, dan izin/cuti) beserta header-nya.
+const MODULE_SHEET_HEADERS_ = {
+  'MEETINGS': ['ID','DATE','START_TIME','END_TIME','TITLE','LOCATION','MEETING_LINK','PARTICIPANTS','NOTES','CREATED_BY_EMAIL','CREATED_BY_NAME','CREATED_AT'],
+  'ATTENDANCE': ['ID','DATE','EMAIL','USER_NAME','DIVISION','OUTLET_ID','OUTLET_NAME','SHIFT_ID','SHIFT_NAME','CHECK_IN_AT','CHECK_OUT_AT','IN_LAT','IN_LNG','IN_ACCURACY','OUT_LAT','OUT_LNG','OUT_ACCURACY','IN_PHOTO_URL','OUT_PHOTO_URL','STATUS','WORK_MINUTES','NOTES'],
+  'LEAVE_REQUESTS': ['ID','EMAIL','USER_NAME','DIVISION','TYPE','START_DATE','END_DATE','REASON','STATUS','APPROVER_EMAIL','APPROVER_NAME','APPROVER_NOTE','CREATED_AT','DECIDED_AT'],
+  'ATT_OUTLETS': ['ID','NAME','LATITUDE','LONGITUDE','RADIUS','ACTIVE','CREATED_AT'],
+  'ATT_SHIFTS': ['ID','NAME','START_TIME','END_TIME','TOLERANCE','ACTIVE','CREATED_AT'],
+  'ATT_SCHEDULES': ['ID','EMAIL','DATE','SHIFT_ID','OUTLET_ID','CREATED_AT']
+};
+
+// Daftar operasi yang boleh dipanggil lewat doPost. Fungsi yang belum ada di
+// deployment otomatis tidak diregistrasi (fail closed).
+const API_ROUTE_NAMES_ = ['loginUser','registerUser','getPublicDivisions','restoreSession','logoutUser',
+  'changeMyPassword','requestPasswordReset','confirmPasswordReset','getBootstrapData','getDashboardData',
+  'getReports','getReportDetail','saveReport','updateReportStatus','addReportNote','listUsers','saveUser',
+  'listDivisions','saveDivision','getAuditLogs','exportReportsPdf','exportReportsXlsx','updateMyProfile',
+  'getMyProfilePhoto','listMeetings','saveMeeting','deleteMeeting','getAttendanceOverview',
+  'checkInAttendance','checkOutAttendance','getAttendancePhoto','submitLeaveRequest','listLeaveRequests',
+  'decideLeaveRequest','getAttendanceSettings','saveAttendanceOutlet','saveAttendanceShift','saveEmployeeSchedule'];
+
+// Hierarchy wewenang: SUPER_ADMIN > ADMIN > USER.
+const ROLE_RANK_={'USER':1,'ADMIN':2,'SUPER_ADMIN':3};
+function isSuperAdmin_(u){return u.role==='SUPER_ADMIN';}
+function isAdminRole_(u){return u.role==='ADMIN'||u.role==='SUPER_ADMIN';}
+function requireAdminRole_(token){var u=requireUser_(token);if(!isAdminRole_(u))throw new Error('Akses ditolak.');return u;}
+function requireSuperRole_(token){var u=requireUser_(token);if(u.role!=='SUPER_ADMIN')throw new Error('Akses ditolak.');return u;}
+function canEditUser_(actor,target){
+  if(actor.role==='SUPER_ADMIN')return true;
+  if(actor.role==='ADMIN')return String(target.DIVISION||'')===actor.division&&roleRank_(target)<=1;
+  return false;
+}
+function roleRank_(row){return ROLE_RANK_[String(row.ROLE||'USER')]||1;}
+function updateUserRole_(sh,rowIndex,role){sh.getRange(rowIndex,4+1).setValue(role);}
+
 function doGet(e) {
   var page = HtmlService.createHtmlOutputFromFile('Index');
   if (!/<html[\s>]/i.test(page.getContent())) {
@@ -36,14 +74,16 @@ function setupApp() {
   const ss = getDb_();
   ensureSheet_(ss, CONFIG.SHEETS.REPORTS, [
     'ID','TIMESTAMP','DATE','USER_EMAIL','USER_NAME','DIVISION','ROLE','STATUS',
-    'ACTIVITY','DEADLINE','DRIVE_URL','NOTES','COMPLETED_AT','UPDATED_AT'
+    'ACTIVITY','DEADLINE','DRIVE_URL','NOTES','COMPLETED_AT','UPDATED_AT',REPORT_EXTRA_HEADER_
   ]);
-  ensureSheet_(ss, CONFIG.SHEETS.USERS, ['EMAIL','NAME','ROLE','DIVISION','ACTIVE','CREATED_AT','UPDATED_AT','SALT','PASSWORD_HASH']);
+  ensureSheet_(ss, CONFIG.SHEETS.USERS, ['EMAIL','NAME','ROLE','DIVISION','ACTIVE','CREATED_AT','UPDATED_AT','SALT','PASSWORD_HASH'].concat(USER_EXTRA_HEADERS_));
   ensureSheet_(ss, CONFIG.SHEETS.SESSIONS, ['TOKEN_HASH','EMAIL','CREATED_AT','EXPIRES_AT','ACTIVE']);
   ensureSheet_(ss, CONFIG.SHEETS.DIVISIONS, ['ID','NAME','ACTIVE','CREATED_AT']);
   ensureSheet_(ss, CONFIG.SHEETS.SETTINGS, ['KEY','VALUE']);
   ensureSheet_(ss, CONFIG.SHEETS.AUDIT, ['TIMESTAMP','ACTOR_EMAIL','ACTOR_NAME','ACTION','ENTITY','ENTITY_ID','DETAIL']);
+  Object.keys(MODULE_SHEET_HEADERS_).forEach(function(n){ensureSheet_(ss,n,MODULE_SHEET_HEADERS_[n]);});
   ensureUserHeaders_(ss.getSheetByName(CONFIG.SHEETS.USERS));
+  seedAttendanceDefaults_(ss);
 
   const email = String(CONFIG.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
   const userSheet = ss.getSheetByName(CONFIG.SHEETS.USERS);
@@ -126,9 +166,89 @@ function changeMyPassword(payload,token){
   validatePassword_(next);
   var users=getSheetObjects_(CONFIG.SHEETS.USERS), found=users.find(function(u){return String(u.EMAIL||'').toLowerCase()===user.email;});
   if(!found||!verifyPassword_(old,String(found.SALT||''),String(found.PASSWORD_HASH||'')))throw new Error('Password saat ini salah.');
-  var pw=makePassword_(next), sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS), data=sh.getDataRange().getValues(), h=data[0];
-  for(var i=1;i<data.length;i++)if(String(data[i][h.indexOf('EMAIL')]||'').toLowerCase()===user.email){sh.getRange(i+1,h.indexOf('SALT')+1).setValue(pw.salt);sh.getRange(i+1,h.indexOf('PASSWORD_HASH')+1).setValue(pw.hash);break;}
+  updateUserPassword_(user.email,next);
   audit_('CHANGE_PASSWORD','USER',user.email,'Password changed'); return {ok:true};
+}
+
+// Reset password mandiri (tanpa SMTP): kode 6 digit ditampilkan sekali di layar reset.
+function requestPasswordReset(payload){
+  ensureCoreSheets_();
+  payload=payload||{}; var email=clean_(payload.email).toLowerCase();
+  if(!email) throw new Error('Email wajib diisi.');
+  var users=getSheetObjects_(CONFIG.SHEETS.USERS), found=users.find(function(u){return String(u.EMAIL||'').toLowerCase()===email;});
+  var generic={ok:false,message:'Jika akun terdaftar, kode reset 6 digit akan muncul di layar berikutnya.'};
+  if(!found||!bool_(found.ACTIVE)) return generic;
+  var code=''; var digits='0123456789';
+  for(var i=0;i<6;i++) code+=digits.charAt(Math.floor(Math.random()*10));
+  var sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS),data=sh.getDataRange().getValues(),h=data[0];
+  for(var r=1;r<data.length;r++){
+    if(String(data[r][h.indexOf('EMAIL')]||'').toLowerCase()!==email) continue;
+    sh.getRange(r+1,h.indexOf('RESET_CODE_HASH')+1).setValue(hashText_(email+'|'+code));
+    sh.getRange(r+1,h.indexOf('RESET_EXPIRES_AT')+1).setValue(new Date(Date.now()+15*60000));
+    break;
+  }
+  audit_('RESET_REQUEST','USER',email,'Kode reset dibuat');
+  return {ok:true,message:'Kode reset Anda: '+code+' (berlaku 15 menit).',maskedEmail:maskEmail_(email)};
+}
+
+function confirmPasswordReset(payload){
+  ensureCoreSheets_();
+  payload=payload||{}; var email=clean_(payload.email).toLowerCase(), code=clean_(payload.code), next=String(payload.newPassword||'');
+  if(!email||!code||!next) throw new Error('Email, kode, dan password baru wajib diisi.');
+  validatePassword_(next);
+  var users=getSheetObjects_(CONFIG.SHEETS.USERS), found=users.find(function(u){return String(u.EMAIL||'').toLowerCase()===email;});
+  if(!found||!bool_(found.ACTIVE)) throw new Error('Kode tidak valid atau sudah kedaluwarsa.');
+  var storedHash=String(found.RESET_CODE_HASH||''), exp=found.RESET_EXPIRES_AT;
+  if(!storedHash||hashText_(email+'|'+code)!==storedHash) throw new Error('Kode tidak valid atau sudah kedaluwarsa.');
+  if(!exp||new Date(exp).getTime()<Date.now()) throw new Error('Kode sudah kedaluwarsa. Minta kode baru.');
+  updateUserPassword_(email,next);
+  clearResetCode_(email); revokeSessionsForEmail_(email);
+  audit_('RESET_CONFIRM','USER',email,'Password direset dengan kode');
+  return {ok:true,message:'Password berhasil diganti. Silakan login dengan password baru.'};
+}
+
+function updateUserPassword_(email,password){
+  var pw=makePassword_(password), sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS), data=sh.getDataRange().getValues(), h=data[0];
+  for(var i=1;i<data.length;i++) if(String(data[i][h.indexOf('EMAIL')]||'').toLowerCase()===email){
+    sh.getRange(i+1,h.indexOf('SALT')+1).setValue(pw.salt);
+    sh.getRange(i+1,h.indexOf('PASSWORD_HASH')+1).setValue(pw.hash);
+    break;
+  }
+}
+function clearResetCode_(email){
+  try{var sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS),data=sh.getDataRange().getValues(),h=data[0];
+  for(var i=1;i<data.length;i++) if(String(data[i][h.indexOf('EMAIL')]||'').toLowerCase()===email){
+    sh.getRange(i+1,h.indexOf('RESET_CODE_HASH')+1,1,2).setValues([['','']]);break;}}catch(e){}
+}
+function revokeSessionsForEmail_(email){
+  try{var sh=getDb_().getSheetByName(CONFIG.SHEETS.SESSIONS),data=sh.getDataRange().getValues(),h=data[0],ei=h.indexOf('EMAIL'),ai=h.indexOf('ACTIVE');
+  for(var i=1;i<data.length;i++) if(String(data[i][ei]||'').toLowerCase()===email) sh.getRange(i+1,ai+1).setValue(false);}catch(e){}
+}
+function maskEmail_(email){var at=email.indexOf('@');if(at<2)return email;return email.slice(0,2)+'***'+email.slice(at);}
+
+function updateMyProfile(payload,token){
+  var user=requireUser_(token); payload=payload||{};
+  var name=clean_(payload.name)||user.name;
+  if(name.length<2) throw new Error('Nama minimal 2 karakter.');
+  var photoUrl=user.photoUrl||'';
+  if(payload.photo&&payload.photo.data) photoUrl=storeDataBlob_(payload.photo,'dr_profile',user.email);
+  var sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS),data=sh.getDataRange().getValues(),h=data[0];
+  for(var i=1;i<data.length;i++) if(String(data[i][h.indexOf('EMAIL')]||'').toLowerCase()===user.email){
+    sh.getRange(i+1,h.indexOf('NAME')+1).setValue(name);
+    if(h.indexOf('PHOTO_URL')>=0) sh.getRange(i+1,h.indexOf('PHOTO_URL')+1).setValue(photoUrl);
+    sh.getRange(i+1,h.indexOf('UPDATED_AT')+1).setValue(new Date());
+    break;
+  }
+  var updated={email:user.email,name:name,role:user.role,division:user.division,photoUrl:photoUrl};
+  cacheUser_(String(token||''),updated); setCurrentUser_(updated);
+  audit_('UPDATE_PROFILE','USER',user.email,'Profil diperbarui');
+  return updated;
+}
+
+function getMyProfilePhoto(token){
+  var user=requireUser_(token);
+  if(!user.photoUrl) return {data:''};
+  return {data:loadDataBlob_(user.photoUrl)};
 }
 
 function getPublicDivisions() {
@@ -145,7 +265,7 @@ function validatePassword_(p) { if(p.length<8) throw new Error('Password minimal
 function issueSession_(email,remember) { var raw=Utilities.getUuid()+'-'+Utilities.getUuid(), now=new Date(), days=remember?30:1, exp=new Date(now.getTime()+days*86400000), sh=getDb_().getSheetByName(CONFIG.SHEETS.SESSIONS); sh.appendRow([hashText_(raw),email,now,exp,true]); return raw; }
 function sessionExpiry_(remember) { return new Date(new Date().getTime()+(remember?30:1)*86400000).toISOString(); }
 function revokeSession_(token) { try{CacheService.getScriptCache().remove('sess_'+hashText_(String(token)));}catch(e){} var sh=getDb_().getSheetByName(CONFIG.SHEETS.SESSIONS),data=sh.getDataRange().getValues(),h=data[0],ti=h.indexOf('TOKEN_HASH'); var th=hashText_(String(token)); for(var i=1;i<data.length;i++){if(String(data[i][ti])===th){sh.getRange(i+1,h.indexOf('ACTIVE')+1).setValue(false);break;}} }
-function userFromRow_(u) { return {email:String(u.EMAIL||'').toLowerCase(),name:String(u.NAME||u.EMAIL||''),role:String(u.ROLE||'USER'),division:String(u.DIVISION||'')}; }
+function userFromRow_(u) { return {email:String(u.EMAIL||'').toLowerCase(),name:String(u.NAME||u.EMAIL||''),role:String(u.ROLE||'USER'),division:String(u.DIVISION||''),photoUrl:String(u.PHOTO_URL||'')}; }
 function ensureUserHeaders_(sh) { var expected=['EMAIL','NAME','ROLE','DIVISION','ACTIVE','CREATED_AT','UPDATED_AT','SALT','PASSWORD_HASH']; var headers=sh.getRange(1,1,1,Math.max(sh.getLastColumn(),expected.length)).getValues()[0]; expected.forEach(function(x,i){if(headers[i]!==x)sh.getRange(1,i+1).setValue(x);}); }
 
 function getBootstrapData(token) {
@@ -154,8 +274,22 @@ function getBootstrapData(token) {
     appName: CONFIG.APP_NAME, companyName: CONFIG.COMPANY_NAME,
     user, divisions: listVisibleDivisions_(user), today: today_(),
     dashboard: getDashboardData({period:'month'}, token),
-    features: {isAdmin:user.role !== 'USER', isSuperAdmin:user.role === 'SUPER_ADMIN'}
+    features: featureFlags_(user)
   };
+}
+
+function featureFlags_(user){
+  const canManageUsers=user.role==='SUPER_ADMIN'||user.role==='OWNER';
+  return {isAdmin:user.role!=='USER',isSuperAdmin:user.role==='SUPER_ADMIN',isOwner:user.role==='OWNER',
+    canManageUsers,canConfigureAttendance:canManageUsers,attendanceEnabled:true};
+}
+
+function restoreSession(token) {
+  var user=requireUser_(token);
+  cacheUser_(token,user);
+  var bootstrap=null;
+  try{bootstrap=getBootstrapData(token);}catch(e){}
+  return {ok:true,user:user,bootstrap:bootstrap,expiresAt:sessionExpiry_(true)};
 }
 
 function saveReport(payload, token) {
@@ -171,14 +305,20 @@ function saveReport(payload, token) {
   const now = new Date(), completedAt = status === 'Selesai' ? now : '';
   let driveUrl = clean_(payload.driveUrl);
   if (payload.file && payload.file.data) driveUrl = saveUploadedFile_(payload.file, user);
-  ensureEvidenceColumn_();
-  getDb_().getSheetByName(CONFIG.SHEETS.REPORTS).appendRow([
-    id, now, date, user.email, user.name, user.division, user.role, status,
-    activity, deadline, driveUrl, clean_(payload.notes), completedAt, now
-  ]);
+  ensureCoreSheets_();
+  var sh=getDb_().getSheetByName(CONFIG.SHEETS.REPORTS),headers=shRangeHeaders_(sh);
+  var row=new Array(headers.length).fill('');
+  var put=function(k,v){var i=headers.indexOf(k);if(i>=0)row[i]=v;};
+  put('ID',id);put('TIMESTAMP',now);put('DATE',date);put('USER_EMAIL',user.email);put('USER_NAME',user.name);
+  put('DIVISION',user.division);put('ROLE',user.role);put('STATUS',status);put('ACTIVITY',activity);
+  put('DEADLINE',deadline);put('DRIVE_URL',driveUrl);put('NOTES',clean_(payload.notes));
+  put('COMPLETED_AT',completedAt);put('UPDATED_AT',now);put(REPORT_EXTRA_HEADER_,clean_(payload.evidenceUrl));
+  sh.appendRow(row);
   audit_('CREATE_REPORT','REPORT',id,activity + ' | ' + status);
   return {ok:true,id,message:'Laporan berhasil disimpan.'};
 }
+
+function shRangeHeaders_(sh){return sh.getRange(1,1,1,Math.max(sh.getLastColumn(),1)).getValues()[0].map(String);}
 
 function ensureEvidenceColumn_(){
   var sh=getDb_().getSheetByName(CONFIG.SHEETS.REPORTS),headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];
@@ -324,12 +464,13 @@ function getAllDivisions_(includeInactive){return getSheetObjects_(CONFIG.SHEETS
 
 function ensureCoreSheets_(){
   var ss=getDb_();
-  ensureSheet_(ss,CONFIG.SHEETS.USERS,['EMAIL','NAME','ROLE','DIVISION','ACTIVE','CREATED_AT','UPDATED_AT','SALT','PASSWORD_HASH']);
+  ensureSheet_(ss,CONFIG.SHEETS.USERS,['EMAIL','NAME','ROLE','DIVISION','ACTIVE','CREATED_AT','UPDATED_AT','SALT','PASSWORD_HASH'].concat(USER_EXTRA_HEADERS_));
   ensureSheet_(ss,CONFIG.SHEETS.DIVISIONS,['ID','NAME','ACTIVE','CREATED_AT']);
   ensureSheet_(ss,CONFIG.SHEETS.SESSIONS,['TOKEN_HASH','EMAIL','CREATED_AT','EXPIRES_AT','ACTIVE']);
-  ensureSheet_(ss,CONFIG.SHEETS.REPORTS,['ID','TIMESTAMP','DATE','USER_EMAIL','USER_NAME','DIVISION','ROLE','STATUS','ACTIVITY','DEADLINE','DRIVE_URL','NOTES','COMPLETED_AT','UPDATED_AT']);
+  ensureSheet_(ss,CONFIG.SHEETS.REPORTS,['ID','TIMESTAMP','DATE','USER_EMAIL','USER_NAME','DIVISION','ROLE','STATUS','ACTIVITY','DEADLINE','DRIVE_URL','NOTES','COMPLETED_AT','UPDATED_AT',REPORT_EXTRA_HEADER_]);
   ensureSheet_(ss,CONFIG.SHEETS.SETTINGS,['KEY','VALUE']);
   ensureSheet_(ss,CONFIG.SHEETS.AUDIT,['TIMESTAMP','ACTOR_EMAIL','ACTOR_NAME','ACTION','ENTITY','ENTITY_ID','DETAIL']);
+  Object.keys(MODULE_SHEET_HEADERS_).forEach(function(name){ensureSheet_(ss,name,MODULE_SHEET_HEADERS_[name]);});
 }
 function seedDefaultDivisions_(){
   var sh=getDb_().getSheetByName(CONFIG.SHEETS.DIVISIONS);
@@ -364,18 +505,24 @@ function durationText_(ms){if(ms<0)ms=0;const min=Math.floor(ms/60000),d=Math.fl
 function audit_(action,entity,id,detail){try{const u=Session.getActiveUser().getEmail()||'system';const users=getSheetObjects_(CONFIG.SHEETS.USERS);const me=users.find(x=>String(x.EMAIL||'').toLowerCase()===String(u).toLowerCase());getDb_().getSheetByName(CONFIG.SHEETS.AUDIT).appendRow([new Date(),u,me?String(me.NAME||u):u,action,entity,id,detail]);}catch(e){}}
 function styleSheet_(sh){if(!sh)return;sh.setFrozenRows(1);const last=sh.getLastColumn();if(last){sh.getRange(1,1,1,last).setFontWeight('bold').setBackground('#172554').setFontColor('#ffffff');sh.autoResizeColumns(1,last);}}
 
-// Public JSON endpoint. Only explicitly listed operations are reachable.
+// Public JSON endpoint. Only operations listed in API_ROUTE_NAMES_ are reachable.
+var API_ROUTES_=null;
+function getApiRoutes_(){
+  if(!API_ROUTES_){
+    API_ROUTES_={};
+    for(var i=0;i<API_ROUTE_NAMES_.length;i++){
+      var name=API_ROUTE_NAMES_[i];
+      try{ if(typeof eval(name)==='function') API_ROUTES_[name]=eval(name); }catch(e){}
+    }
+  }
+  return API_ROUTES_;
+}
 function doPost(e){
   try{
     if(!e||!e.postData||!e.postData.contents)throw new Error('Permintaan kosong.');
     var req=JSON.parse(e.postData.contents);
     if(!req||typeof req.action!=='string'||!Array.isArray(req.args))throw new Error('Permintaan tidak valid.');
-    var routes={loginUser:loginUser,registerUser:registerUser,getPublicDivisions:getPublicDivisions,
-      restoreSession:restoreSession,logoutUser:logoutUser,changeMyPassword:changeMyPassword,
-      getBootstrapData:getBootstrapData,getDashboardData:getDashboardData,getReports:getReports,
-      getReportDetail:getReportDetail,saveReport:saveReport,updateReportStatus:updateReportStatus,
-      addReportNote:addReportNote,listUsers:listUsers,saveUser:saveUser,listDivisions:listDivisions,
-      saveDivision:saveDivision,getAuditLogs:getAuditLogs,exportReportsPdf:exportReportsPdf,exportReportsXlsx:exportReportsXlsx};
+    var routes=getApiRoutes_();
     if(!Object.prototype.hasOwnProperty.call(routes,req.action))throw new Error('Operasi tidak tersedia.');
     return apiJson_({ok:true,data:routes[req.action].apply(null,req.args)});
   }catch(err){return apiJson_({ok:false,error:String(err.message||err)});}
