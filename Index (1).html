@@ -112,12 +112,24 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}.app,.main,.content,.page{
       var box=document.getElementById('loginError'); if(box)box.textContent=err&&err.message?err.message:'Terjadi kesalahan aplikasi.';
       return;
     }}
-    // Jangan tampilkan error palsu. Coba lagi ketika script utama selesai dieksekusi.
+    // Jangan tampilkan error palsu. Tunggu sampai script utama selesai dieksekusi.
     var tries=0;
+    function runWhenReady(){
+      if(typeof window[name]==='function'){try{window[name].apply(window,args);}catch(err){var box=document.getElementById('loginError');if(box)box.textContent=err&&err.message?err.message:'Terjadi kesalahan aplikasi.';}return true;}
+      return false;
+    }
+    if(runWhenReady())return;
     var timer=setInterval(function(){
       tries++;
-      if(typeof window[name]==='function'){clearInterval(timer);try{window[name].apply(window,args)}catch(err){var box=document.getElementById('loginError');if(box)box.textContent=err&&err.message?err.message:'Terjadi kesalahan aplikasi.';} }
-      else if(tries>=50){clearInterval(timer);var box=document.getElementById('loginError');if(box)box.textContent='Modul aplikasi belum termuat. Silakan refresh halaman.';}
+      if(runWhenReady()){clearInterval(timer);return;}
+      // Modul besar bisa termuat lambat (koneksi lambat/PWA). Jangan blok dengan error palsu:
+      // beri tahu bahwa aplikasi masih memuat dan terus tunggu hingga 60 detik.
+      var box=document.getElementById('loginError');
+      if(tries===20&&box&&!box.textContent)box.textContent='Aplikasi masih memuat, silakan tunggu sebentar...';
+      if(tries>=600){
+        clearInterval(timer);
+        if(box)box.textContent='Modul aplikasi belum termuat. Periksa koneksi lalu muat ulang halaman (tarik ke bawah untuk refresh penuh).';
+      }
     },100);
   }
   document.addEventListener('click',function(e){
