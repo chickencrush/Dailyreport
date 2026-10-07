@@ -150,10 +150,18 @@ function ensureUserHeaders_(sh) { var expected=['EMAIL','NAME','ROLE','DIVISION'
 
 function getBootstrapData(token) {
   const user = requireUser_(token);
+  // Perf: compute the dashboard inline from a single REPORTS read instead of
+  // calling getDashboardData (which would re-read SESSIONS, USERS and REPORTS).
+  const range = periodRange_('month');
+  // Perf: reuse the cached REPORTS read (same key/version as getDashboardData)
+  const reports = getCachedReportRows_();
+  // Perf/correctness: normalize once per request and reuse for all views.
+  const objects = reports.map(toReportObject_);
+  const rows = objects.filter(function(r) { return canSeeReport_(user, r); });
   return {
     appName: CONFIG.APP_NAME, companyName: CONFIG.COMPANY_NAME,
     user, divisions: listVisibleDivisions_(user), today: today_(),
-    dashboard: getDashboardData({period:'month'}, token),
+    dashboard: buildDashboard_(user, rows, range),
     features: {isAdmin:user.role !== 'USER', isSuperAdmin:user.role === 'SUPER_ADMIN'}
   };
 }
@@ -176,6 +184,7 @@ function saveReport(payload, token) {
     id, now, date, user.email, user.name, user.division, user.role, status,
     activity, deadline, driveUrl, clean_(payload.notes), completedAt, now
   ]);
+  invalidateDataCache_('REPORTS');
   audit_('CREATE_REPORT','REPORT',id,activity + ' | ' + status);
   return {ok:true,id,message:'Laporan berhasil disimpan.'};
 }
@@ -206,6 +215,7 @@ function updateReportStatus(id, payload, token) {
       row[ix('STATUS')]=status;row[ix('UPDATED_AT')]=now;
       if(status==='Selesai'){row[ix('EVIDENCE_URL')]=evidence;row[ix('COMPLETED_AT')]=now;}
       sh.getRange(i+1,1,1,h.length).setValues([row]);
+      invalidateDataCache_('REPORTS');
       audit_('UPDATE_STATUS','REPORT',id,current+' → '+status);
       return {ok:true,message:'Status diperbarui.'};
     }
@@ -221,15 +231,26 @@ function addReportNote(id,note,token){
     const old=String(data[i][ix('NOTES')]||''), stamp=Utilities.formatDate(new Date(),CONFIG.TIMEZONE,'dd/MM/yyyy HH:mm');
     sh.getRange(i+1,ix('NOTES')+1).setValue(old?old+'\n['+stamp+'] '+note:'['+stamp+'] '+note);
     sh.getRange(i+1,ix('UPDATED_AT')+1).setValue(new Date());
+    invalidateDataCache_('REPORTS');
     audit_('ADD_NOTE','REPORT',id,note); return {ok:true,message:'Catatan ditambahkan.'};
   }
   throw new Error('Laporan tidak ditemukan.');
 }
 
 function getDashboardData(filters,token){
-  const user=requireUser_(token), rows=getReportObjects_().filter(r=>canSeeReport_(user,r));
+  const user=requireUser_(token);
+  // Perf: one cached REPORTS read; visibility/date filters run in memory.
+  const allReports=getCachedReportRows_().map(toReportObject_);
+  const rows=allReports.filter(r=>canSeeReport_(user,r));
   const range=periodRange_(filters&&filters.period,filters&&filters.startDate,filters&&filters.endDate);
-  const scoped=rows.filter(r=>r.date>=range.start&&r.date<=range.end), today=today_(), todayRows=rows.filter(r=>r.date===today);
+  return buildDashboard_(user,rows,range);
+}
+
+// Perf: dashboard aggregation extracted so getBootstrapData can reuse it
+// without a second requireUser_/sheet-read round trip.
+function buildDashboard_(user,rows,range){
+  const scoped=rows.filter(r=>r.date>=range.start&&r.date<=range.end);
+  const today=today_(), todayRows=rows.filter(r=>r.date===today);
   const counts=countStatuses_(scoped), todayCounts=countStatuses_(todayRows);
   const overdue=scoped.filter(r=>r.deadline&&r.deadline<today&&r.status!=='Selesai');
   const byDate={}; scoped.forEach(r=>byDate[r.date]=(byDate[r.date]||0)+1);
@@ -238,21 +259,23 @@ function getDashboardData(filters,token){
   const divisionStats=Object.keys(byDivision).map(k=>({name:k,value:byDivision[k]})).sort((a,b)=>b.value-a.value);
   const byEmployee={}; scoped.forEach(r=>{const k=r.userName||r.userEmail; if(!byEmployee[k])byEmployee[k]={name:k,division:r.division||'-',total:0,done:0,progress:0,hold:0}; byEmployee[k].total++; byEmployee[k][statusKey_(r.status)]++;});
   const employeeStats=Object.keys(byEmployee).map(k=>byEmployee[k]).sort((a,b)=>b.total-a.total).slice(0,30);
+  // Perf: single pass for myTotal (was a second full filter over rows)
+  let myTotal=0; for(let i=0;i<rows.length;i++) if(rows[i].userEmail===user.email) myTotal++;
   const recent=scoped.slice().sort((a,b)=>(b.timestamp||'').localeCompare(a.timestamp||'')).slice(0,25);
   return {period:range,total:scoped.length,todayTotal:todayRows.length,counts,todayCounts,overdueCount:overdue.length,
     overdue:overdue.slice().sort((a,b)=>a.deadline.localeCompare(b.deadline)).slice(0,10).map(safeReport_),trend,divisionStats,employeeStats,
-    recent:recent.map(safeReport_),myTotal:rows.filter(r=>r.userEmail===user.email).length,employeeCount:getVisibleUserCount_(user)};
+    recent:recent.map(safeReport_),myTotal:myTotal,employeeCount:getVisibleUserCount_(user)};
 }
 
 function getReports(filters,token){
   const user=requireUser_(token); filters=filters||{}; const range=periodRange_(filters.period||'month',filters.startDate,filters.endDate),q=clean_(filters.query).toLowerCase();
-  return getReportObjects_().filter(r=>canSeeReport_(user,r)).filter(r=>r.date>=range.start&&r.date<=range.end)
+  return getCachedReportRows_().map(toReportObject_).filter(r=>canSeeReport_(user,r)).filter(r=>r.date>=range.start&&r.date<=range.end)
     .filter(r=>!filters.status||r.status===filters.status).filter(r=>!filters.division||r.division===filters.division)
     .filter(r=>!q||[r.userName,r.division,r.activity,r.status,r.id].join(' ').toLowerCase().indexOf(q)>=0)
     .sort((a,b)=>(b.date+b.timestamp).localeCompare(a.date+a.timestamp)).map(safeReport_);
 }
 
-function getReportDetail(id,token){const user=requireUser_(token),row=getReportObjects_().find(r=>r.id===clean_(id));if(!row)throw new Error('Laporan tidak ditemukan.');if(!canSeeReport_(user,row))throw new Error('Anda tidak memiliki akses ke laporan ini.');return safeReport_(row);}
+function getReportDetail(id,token){const user=requireUser_(token),row=getCachedReportRows_().map(toReportObject_).find(r=>r.id===clean_(id));if(!row)throw new Error('Laporan tidak ditemukan.');if(!canSeeReport_(user,row))throw new Error('Anda tidak memiliki akses ke laporan ini.');return safeReport_(row);}
 
 function exportReportsPdf(filters,token){
   const user=requireUser_(token), rows=getReports(filters||{},token), range=periodRange_(filters&&filters.period||'month',filters&&filters.startDate,filters&&filters.endDate);
@@ -290,13 +313,14 @@ function saveUser(payload,token){
   if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new Error('Email tidak valid.');if(!name)throw new Error('Nama wajib diisi.');if(ROLES.indexOf(role)<0)throw new Error('Role tidak valid.');if(role!=='SUPER_ADMIN'&&!division)throw new Error('Divisi wajib diisi.');
   const sh=getDb_().getSheetByName(CONFIG.SHEETS.USERS),data=sh.getDataRange().getValues(),h=data[0],ei=h.indexOf('EMAIL');let row=-1;for(let i=1;i<data.length;i++)if(String(data[i][ei]).toLowerCase()===email){row=i+1;break;}
   const now=new Date(),existingRow=row>0?data[row-1]:null; var salt=existingRow?String(existingRow[7]||''):''; var ph=existingRow?String(existingRow[8]||''):''; if(payload.password){validatePassword_(String(payload.password));var pw=makePassword_(String(payload.password));salt=pw.salt;ph=pw.hash;} const values=[email,name,role,role==='SUPER_ADMIN'?'':division,payload.active!==false,row>0?data[row-1][5]:now,now,salt,ph];if(row>0)sh.getRange(row,1,1,9).setValues([values]);else sh.appendRow(values);
+  invalidateDataCache_('USERS');
   audit_('SAVE_USER','USER',email,name+' | '+role+' | '+division);return{ok:true};
 }
 function listDivisions(token){requireRole_(['SUPER_ADMIN'],token);return getAllDivisions_(true);}
 function saveDivision(payload,token){
   requireRole_(['SUPER_ADMIN'],token);payload=payload||{};const id=clean_(payload.id)||'DIV-'+Utilities.getUuid().slice(0,6).toUpperCase(),name=clean_(payload.name);if(!name)throw new Error('Nama divisi wajib diisi.');
   const sh=getDb_().getSheetByName(CONFIG.SHEETS.DIVISIONS),data=sh.getDataRange().getValues();let row=-1;for(let i=1;i<data.length;i++)if(String(data[i][0])===id){row=i+1;break;}
-  const values=[id,name,payload.active!==false,row>0?data[row-1][3]:new Date()];if(row>0)sh.getRange(row,1,1,4).setValues([values]);else sh.appendRow(values);audit_('SAVE_DIVISION','DIVISION',id,name);return{ok:true,id};
+  const values=[id,name,payload.active!==false,row>0?data[row-1][3]:new Date()];if(row>0)sh.getRange(row,1,1,4).setValues([values]);else sh.appendRow(values);invalidateDataCache_('DIVISIONS');audit_('SAVE_DIVISION','DIVISION',id,name);return{ok:true,id};
 }
 function getAuditLogs(token){requireRole_(['SUPER_ADMIN'],token);return getSheetObjects_(CONFIG.SHEETS.AUDIT).slice(-200).reverse().map(x=>({timestamp:dateTime_(x.TIMESTAMP),actor:String(x.ACTOR_NAME||x.ACTOR_EMAIL||''),action:String(x.ACTION||''),entity:String(x.ENTITY||''),entityId:String(x.ENTITY_ID||''),detail:String(x.DETAIL||'')}));}
 function getCompanySummary(token){requireRole_(['SUPER_ADMIN'],token);return getDashboardData({period:'year'},token);}
@@ -344,8 +368,118 @@ function seedDefaultDivisions_(){
   }
 }
 
-function getVisibleUserCount_(u){const users=getSheetObjects_(CONFIG.SHEETS.USERS).filter(x=>bool_(x.ACTIVE));return u.role==='SUPER_ADMIN'?users.length:users.filter(x=>String(x.DIVISION||'')===u.division).length;}
-function getReportObjects_(){return getSheetObjects_(CONFIG.SHEETS.REPORTS).map(r=>({id:String(r.ID||''),timestamp:dateTime_(r.TIMESTAMP),date:formatDate_(r.DATE),userEmail:String(r.USER_EMAIL||'').toLowerCase(),userName:String(r.USER_NAME||''),division:String(r.DIVISION||''),role:String(r.ROLE||''),status:String(r.STATUS||'Proses'),activity:String(r.ACTIVITY||''),deadline:formatDate_(r.DEADLINE),driveUrl:String(r.DRIVE_URL||''),evidenceUrl:String(r.EVIDENCE_URL||''),notes:String(r.NOTES||''),completedAt:dateTime_(r.COMPLETED_AT),updatedAt:dateTime_(r.UPDATED_AT)}));}
+function getVisibleUserCount_(u){const users=getCachedSheetObjects_(CONFIG.SHEETS.USERS).filter(x=>bool_(x.ACTIVE));return u.role==='SUPER_ADMIN'?users.length:users.filter(x=>String(x.DIVISION||'')===u.division).length;}
+function getReportObjects_(){return getSheetObjects_(CONFIG.SHEETS.REPORTS).map(function(r){var o={id:String(r.ID||''),timestamp:dateTime_(r.TIMESTAMP),date:formatDate_(r.DATE),userEmail:String(r.USER_EMAIL||'').toLowerCase(),userName:String(r.USER_NAME||''),division:String(r.DIVISION||''),role:String(r.ROLE||''),status:String(r.STATUS||'Proses'),activity:String(r.ACTIVITY||''),deadline:formatDate_(r.DEADLINE),driveUrl:String(r.DRIVE_URL||''),evidenceUrl:String(r.EVIDENCE_URL||''),notes:String(r.NOTES||''),completedAt:dateTime_(r.COMPLETED_AT),updatedAt:dateTime_(r.UPDATED_AT)}; // Perf/correctness: preserve any extra columns added by upgrades so cache round-trips never lose data
+  var known={ID:1,TIMESTAMP:1,DATE:1,USER_EMAIL:1,USER_NAME:1,DIVISION:1,ROLE:1,STATUS:1,ACTIVITY:1,DEADLINE:1,DRIVE_URL:1,EVIDENCE_URL:1,NOTES:1,COMPLETED_AT:1,UPDATED_AT:1};
+  Object.keys(r).forEach(function(k){if(!known[k]&&o[k]===undefined)o[k]=r[k];});
+  return o;});}
+// Perf: cached data-access layer. Google Sheets reads dominate Apps Script
+// execution time; caching the parsed rows in ScriptCache (with explicit
+// invalidation on every write) removes repeated full-sheet reads inside a
+// single request and across concurrent requests.
+var SHEET_CACHE_TTL_=300, CACHE_VERSION_TTL_=60, DATA_CACHE_VERSION_KEY_='dataV', cacheState_=null;
+// Perf: the data-cache version lives in a tiny CACHE sheet but is read at
+// most once per minute from ScriptCache, so reads stay fresh with near-zero
+// extra quota. Writes bump it immediately for cross-execution consistency.
+function getCacheVersion_(){
+  if(!cacheState_)cacheState_={db:getDb_()};
+  if(cacheState_.version==null){
+    try{
+      var cachedV=CacheService.getScriptCache().get(DATA_CACHE_VERSION_KEY_);
+      if(cachedV!=null){cacheState_.version=String(cachedV);}
+      else{
+        var vs=cacheState_.db.getSheetByName('CACHE');
+        if(!vs)vs=cacheState_.db.insertSheet('CACHE');
+        var cell=vs.getRange(1,1),v=cell.getValue();
+        if(v===''||v==null){v='1';cell.setValue(v);}
+        v=String(v);cacheState_.version=v;cacheState_.sheet=vs;
+        try{CacheService.getScriptCache().put(DATA_CACHE_VERSION_KEY_,v,CACHE_VERSION_TTL_);}catch(e){}
+      }
+    }catch(e){cacheState_.version='0';cacheState_.sheet=null;}
+  }
+  return cacheState_.version;
+}
+function bumpCacheVersion_(){
+  if(!cacheState_)cacheState_={db:getDb_()};
+  if(cacheState_.version==null){
+    // Perf: don't pay for a cached version read right before overwriting it.
+    try{cacheState_.version=getDb_().getSheetByName('CACHE').getRange(1,1).getValue();}catch(e){cacheState_.version=null;}
+  }
+  if(!cacheState_.sheet){
+    try{
+      var vs=cacheState_.db.getSheetByName('CACHE')||cacheState_.db.insertSheet('CACHE');
+      cacheState_.sheet=vs;
+      if(cacheState_.version==null||cacheState_.version===''){cacheState_.version='1';vs.getRange(1,1).setValue('1');}
+    }catch(e){cacheState_.sheet=null;return;}
+  }
+  if(!cacheState_.sheet)return;
+  try{
+    var next=String((parseInt(cacheState_.version,10)||0)+1);
+    cacheState_.sheet.getRange(1,1).setValue(next);
+    cacheState_.version=next;
+    // Invalidate the cached version everywhere so readers reload at once.
+    try{CacheService.getScriptCache().remove(DATA_CACHE_VERSION_KEY_);}catch(e){}
+  }catch(e){}
+}
+function invalidateDataCache_(sheetName){
+  try{bumpCacheVersion_();}catch(e){}
+  try{CacheService.getScriptCache().remove('data_'+sheetName+'#0');}catch(e){}
+}
+function getCachedSheetObjects_(name){
+  var version;
+  try{version=getCacheVersion_();}catch(e){return getSheetObjects_(name);}
+  // Perf: sheets are split across multiple ScriptCache entries (each entry is
+  // limited to ~10KB) so even large datasets stay cacheable. A one-byte
+  // sentinel marks the end of a chunked list; partial writes fall back to a
+  // fresh read instead of returning truncated data.
+  var key='data_'+name+'@'+version, cache=null;
+  try{cache=CacheService.getScriptCache();}catch(e){}
+  if(!cache)return getSheetObjects_(name);
+  try{
+    var first=cache.get(key+'#0');
+    if(first!=null){
+      var rows;
+      if(first.charAt(0)==='[')rows=JSON.parse(first);
+      else{
+        var json=[first],sentinel=cache.get(key+'$end');
+        if(sentinel==null)throw new Error('partial');
+        var count=parseInt(sentinel,10);
+        for(var i=1;i<count;i++){
+          var p=cache.get(key+'#'+i);
+          if(p==null)throw new Error('partial');
+          json.push(p);
+        }
+        rows=JSON.parse('['+json.join(',')+']');
+      }
+      if(rows&&rows.__err)throw new Error('Gagal membaca data. Silakan coba lagi.');
+      return rows||[];
+    }
+  }catch(e){if(e&&/Gagal membaca/.test(String(e.message||e)))throw e;}
+  var objs;
+  try{objs=getSheetObjects_(name);}
+  catch(e){try{cache.put(key+'#0','{"__err":1}',5);}catch(e2){}throw e;}
+  try{
+    var json=objs.map(function(o){return JSON.stringify(o);});
+    var chunk='',idx=0;
+    for(var j=0;j<json.length;j++){
+      var candidate=chunk?(chunk+','+json[j]):json[j];
+      if(candidate.length>9000&&chunk){cache.put(key+'#'+idx,chunk,SHEET_CACHE_TTL_);idx++;chunk=json[j];}
+      else chunk=candidate;
+    }
+    if(idx===0){
+      cache.put(key+'#0',chunk?('['+chunk+']'):'[]',SHEET_CACHE_TTL_);
+    }else{
+      cache.put(key+'#'+idx,chunk,SHEET_CACHE_TTL_);idx++;
+      cache.put(key+'$end',String(idx),SHEET_CACHE_TTL_);
+    }
+  }catch(e){}
+  return objs;
+}
+// Perf: cache stores raw sheet rows (Date values serialize as ISO strings);
+// toReportObject_ normalizes them into the app's report shape. This keeps
+// cached payloads small and free of duplicate derived fields.
+function getCachedReportRows_(){return getCachedSheetObjects_(CONFIG.SHEETS.REPORTS);}
+function toReportObject_(r){return {id:String(r.ID||''),timestamp:dateTime_(r.TIMESTAMP),date:formatDate_(r.DATE),userEmail:String(r.USER_EMAIL||'').toLowerCase(),userName:String(r.USER_NAME||''),division:String(r.DIVISION||''),role:String(r.ROLE||''),status:String(r.STATUS||'Proses'),activity:String(r.ACTIVITY||''),deadline:formatDate_(r.DEADLINE),driveUrl:String(r.DRIVE_URL||''),evidenceUrl:String(r.EVIDENCE_URL||''),notes:String(r.NOTES||''),completedAt:dateTime_(r.COMPLETED_AT),updatedAt:dateTime_(r.UPDATED_AT)};}
 function safeReport_(r){const now=new Date();let duration='';if(r.completedAt&&r.timestamp)duration=durationText_(new Date(r.completedAt)-new Date(r.timestamp));else if(r.timestamp)duration=durationText_(now-new Date(r.timestamp));return Object.assign({},r,{duration});}
 function countStatuses_(rows){return{Selesai:rows.filter(r=>r.status==='Selesai').length,Proses:rows.filter(r=>r.status==='Proses').length,Hold:rows.filter(r=>r.status==='Hold').length};}
 function statusKey_(s){return s==='Selesai'?'done':s==='Hold'?'hold':'progress';}
