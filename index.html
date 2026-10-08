@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CrushOps</title>
 <meta name="theme-color" content="#0b1120">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="CrushOps">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -130,7 +131,6 @@ color:#eaf0ff;font-size:16px;flex:none}
 .top-date{font-size:10px;color:var(--muted);margin-top:2px}
 .top-right{display:flex;align-items:center;gap:12px}
 .content{padding:22px 24px;width:100%;max-width:1700px;margin:auto}
-.page-title h1{margin:0;font-size:21px}.page-title p{margin:4px 0 0;color:var(--muted);font-size:11px}
 
 /* ---------- Topbar widgets ---------- */
 .notif-wrap{position:relative}
@@ -221,7 +221,6 @@ border-radius:10px;padding:10px 3px;font-size:10px;cursor:pointer}
 .hold input:checked+label{background:var(--rbg);border-color:#ff668e;color:#ff9fb8}
 .upload{border:1.5px dashed #3c4c6c;border-radius:11px;padding:11px;text-align:center;color:var(--muted);font-size:10px}
 .upload input{width:100%;margin-top:7px;font-size:10px}
-.small-note{text-align:center;color:var(--muted);font-size:10px;margin-top:10px}
 .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .section-head h2{margin:0;font-size:14px}
 .filters{display:flex;gap:8px;flex-wrap:wrap}
@@ -386,7 +385,7 @@ padding:20px;max-height:90vh;overflow:auto}
       <button class="nav-btn admin-only" data-page="pengguna"><i>👥</i> Pengguna</button>
       <button class="nav-btn admin-only" data-page="pengaturan"><i>⚙️</i> Pengaturan</button>
     </nav>
-    <div class="side-bottom">CrushOps v2.2<br>Google Apps Script</div>
+    <div class="side-bottom">CrushOps v2.2<br>Google Apps Script API</div>
   </aside>
 
   <div class="main">
@@ -477,8 +476,8 @@ padding:20px;max-height:90vh;overflow:auto}
             <div class="section-head">
               <h2>Daftar Laporan <span id="repCount" style="color:var(--muted)"></span></h2>
               <div class="filters">
-                <button id="btnExpRepXlsx" class="btn-soft" title="Ekspor ke Excel">📊 Excel</button>
-                <button id="btnExpRepPdf" class="btn-soft" title="Ekspor ke PDF">📄 PDF</button>
+                <button id="btnExpRepXlsx" class="btn-soft">📊 Excel</button>
+                <button id="btnExpRepPdf" class="btn-soft">📄 PDF</button>
                 <select id="filterDivisi" class="select"><option value="">Semua Divisi</option></select>
                 <input id="searchReport" class="input search" placeholder="🔍 Cari judul / nama...">
               </div>
@@ -644,9 +643,10 @@ padding:20px;max-height:90vh;overflow:auto}
 </div>
 
 <script>
-/* ============ GAMBAR: paste base64 DI SINI (1x per gambar) ============ */
-const WORDMARK_SRC = ""; // ← paste base64 wordmark CrushOps di sini
-const MASCOT_SRC   = ""; // ← paste base64 maskot ayam di sini
+/* ============ KONFIGURASI ============ */
+const API_URL = 'https://script.google.com/macros/s/AKfycbz94wl1Sg5SiEvnxd0UH5AFMNSSAla63BWHdHYPJ1bJOq0c9K2Pk7sTv4aWjIyqhSj0/exec';
+const WORDMARK_SRC = "https://drive.google.com/file/d/1rBQ7p0GriU1eNnN4p4921h2J9WBZTtHW/view?usp=drive_link"; // ← paste base64 wordmark CrushOps di sini
+const MASCOT_SRC   = "https://drive.google.com/file/d/1rBQ7p0GriU1eNnN4p4921h2J9WBZTtHW/view?usp=drive_link"; // ← paste base64 maskot ayam di sini
 
 /* ================= CORE ================= */
 const $  = s => document.querySelector(s);
@@ -674,25 +674,35 @@ function toast(msg, isErr){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.add('hidden'), 3500);
 }
-const API_URL = 'https://script.google.com/macros/s/AKfycbz94wl1Sg5SiEvnxd0UH5AFMNSSAla63BWHdHYPJ1bJOq0c9K2Pk7sTv4aWjIyqhSj0/exec';
 
+/* Koneksi ke API Apps Script via fetch (untuk frontend GitHub Pages).
+   Content-Type text/plain = "simple request" → tidak ada preflight CORS. */
 async function call(fn, ...args){
   showLoader(true);
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 45000); // timeout 45 detik
   try{
     const r = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ fn: fn, args: args })
+      body: JSON.stringify({ fn: fn, args: args }),
+      redirect: 'follow',
+      signal: ctrl.signal
     });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
     const txt = await r.text();
     let res;
     try { res = JSON.parse(txt); }
-    catch(e){ throw new Error('Server tidak mengembalikan JSON. Cek setting deployment: Execute as Me & access Anyone.'); }
+    catch(e){
+      throw new Error('Server tidak mengembalikan JSON. Cek: 1) doPost ada di Code.gs 2) Deploy sudah New version 3) Access = Anyone.');
+    }
     return res;
   }catch(err){
-    toast('Koneksi API gagal: ' + err.message, true);
-    return { ok:false };
+    const m = err.name === 'AbortError' ? 'Timeout — server tidak merespons.' : err.message;
+    toast('Koneksi API gagal: ' + m, true);
+    return { ok:false, msg:m };
   }finally{
+    clearTimeout(to);
     showLoader(false);
   }
 }
@@ -720,9 +730,9 @@ function serverDate(){ return new Date(S.serverBase ? S.serverBase + (Date.now()
 function todayLocal(){ const d=serverDate(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
 function tick(){
   const d = serverDate();
-  $('#clock').textContent = pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+  const c = $('#clock'); if(c) c.textContent = pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
   const t = HARI[d.getDay()]+', '+d.getDate()+' '+BULAN[d.getMonth()]+' '+d.getFullYear();
-  $('#clockDate').textContent = t;
+  const cd = $('#clockDate'); if(cd) cd.textContent = t;
   $('#topDate').textContent = t;
 }
 setInterval(tick, 1000);
@@ -751,7 +761,8 @@ async function enterApp(){
   const st = await call('apiGetSettings');
   if(st && st.ok) S.settings = st.settings;
   fillDivisiSelects();
-  syncTime().then(tick); tick();
+  syncTime();
+  tick();
   go('dashboard');
   loadNotifs();
   clearInterval(S.notifTimer);
@@ -1155,7 +1166,7 @@ async function resetPassword(id){
   if(p === null) return;
   if(p.trim().length < 4){ toast('Password minimal 4 karakter.', true); return; }
   const r = await call('apiResetPassword', S.user, id, p.trim());
-  if(r && r.ok) toast('Password ' + u.nama + ' berhasil direset ✓ (user dinotifikasi via email)');
+  if(r && r.ok) toast('Password ' + u.nama + ' berhasil direset ✓');
 }
 async function deleteUser(id){
   if(!confirm('Hapus pengguna ini? Tindakan tidak dapat dibatalkan.')) return;
