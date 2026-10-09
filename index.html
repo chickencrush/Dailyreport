@@ -909,8 +909,6 @@ async function enterApp(){
   tick();
   go('dashboard');
   loadNotifs();
-  clearInterval(S.notifTimer);
-  S.notifTimer = setInterval(loadNotifs, 60000);
 }
 
 /* ================= NAVIGASI ================= */
@@ -1462,8 +1460,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#izinChip').addEventListener('click', () => go('izin'));
   $('#kendalaChip').addEventListener('click', () => go('kendala'));
 
-  $('#notifBtn').addEventListener('click', e => { e.stopPropagation();
-    $('#notifPanel').classList.toggle('hidden'); $('#profileMenu').classList.add('hidden'); });
+    $('#notifBtn').addEventListener('click', e => { e.stopPropagation();
+    $('#notifPanel').classList.toggle('hidden'); $('#profileMenu').classList.add('hidden');
+    if(!$('#notifPanel').classList.contains('hidden')) loadNotifs();
+  });
   $('#profileBtn').addEventListener('click', e => { e.stopPropagation();
     $('#profileMenu').classList.toggle('hidden'); $('#notifPanel').classList.add('hidden'); });
   $('#btnReadAll').addEventListener('click', markRead);
