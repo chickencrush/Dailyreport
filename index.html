@@ -8,6 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="CrushOps">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐔</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -331,7 +332,6 @@ padding:20px;max-height:90vh;overflow:auto}
 </head>
 <body>
 
-<!-- Loader -->
 <div id="loader" class="loader hidden">
   <div class="loading-card">
     <div class="loading-orbit"><img class="loading-mascot" data-img alt=""></div>
@@ -385,7 +385,7 @@ padding:20px;max-height:90vh;overflow:auto}
       <button class="nav-btn admin-only" data-page="pengguna"><i>👥</i> Pengguna</button>
       <button class="nav-btn admin-only" data-page="pengaturan"><i>⚙️</i> Pengaturan</button>
     </nav>
-    <div class="side-bottom">CrushOps v2.2<br>Google Apps Script API</div>
+    <div class="side-bottom">CrushOps v3.0</div>
   </aside>
 
   <div class="main">
@@ -644,9 +644,11 @@ padding:20px;max-height:90vh;overflow:auto}
 
 <script>
 /* ============ KONFIGURASI ============ */
+/* API_URL hanya dipakai bila halaman TIDAK di-serve oleh Apps Script (mis. GitHub Pages).
+   Di dalam Apps Script otomatis memakai google.script.run. */
 const API_URL = 'https://script.google.com/macros/s/AKfycbz94wl1Sg5SiEvnxd0UH5AFMNSSAla63BWHdHYPJ1bJOq0c9K2Pk7sTv4aWjIyqhSj0/exec';
-const WORDMARK_SRC = "https://drive.google.com/file/d/1rBQ7p0GriU1eNnN4p4921h2J9WBZTtHW/view?usp=drive_link"; // ← paste base64 wordmark CrushOps di sini
-const MASCOT_SRC   = "https://drive.google.com/file/d/1rBQ7p0GriU1eNnN4p4921h2J9WBZTtHW/view?usp=drive_link"; // ← paste base64 maskot ayam di sini
+const WORDMARK_SRC = ""; // ← paste base64 wordmark CrushOps di sini
+const MASCOT_SRC   = ""; // ← paste base64 maskot ayam di sini
 
 /* ================= CORE ================= */
 const $  = s => document.querySelector(s);
@@ -654,18 +656,25 @@ const $$ = s => document.querySelectorAll(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pad = n => String(n).padStart(2,'0');
 const initials = n => String(n||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+const HAS_GAS = (typeof google !== 'undefined' && google.script && google.script.run);
+const SILENT_FNS = { apiServerTime:1, apiGetNotifications:1, apiPing:1 }; // gagal = tanpa toast (hindari spam)
 
 const store = {
   get(k){ try { return sessionStorage.getItem(k) || localStorage.getItem(k); } catch(e){ return null; } },
   set(k,v,perm){ try { (perm?localStorage:sessionStorage).setItem(k,v); } catch(e){} },
-  clear(){ try { ['co_user','co_remember'].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);}); } catch(e){} }
+  clear(){ try { ['co_user'].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);}); } catch(e){} }
 };
 
 let S = { user:null, settings:{}, page:'dashboard', reports:[], issues:[], att:[], attToday:null,
           leaves:[], users:[], recap:[], gps:null, photo:null, lampiranB64:null, editing:false,
           serverBase:null, baseAt:0, chDivisi:null, chStatus:null, notifTimer:null };
 
-function showLoader(v){ $('#loader').classList.toggle('hidden', !v); }
+/* Loader dengan penghitung — aman untuk banyak request paralel */
+let loadCount = 0;
+function showLoader(v){
+  loadCount = Math.max(0, loadCount + (v ? 1 : -1));
+  $('#loader').classList.toggle('hidden', loadCount === 0);
+}
 let toastTimer = null;
 function toast(msg, isErr){
   const t = $('#toast');
@@ -675,36 +684,54 @@ function toast(msg, isErr){
   toastTimer = setTimeout(()=>t.classList.add('hidden'), 3500);
 }
 
-/* Koneksi ke API Apps Script via fetch (untuk frontend GitHub Pages).
-   Content-Type text/plain = "simple request" → tidak ada preflight CORS. */
+/* Jembatan API: otomatis pilih google.script.run (di dalam Apps Script)
+   atau fetch POST ke doPost (dari GitHub Pages). */
 async function call(fn, ...args){
   showLoader(true);
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 45000); // timeout 45 detik
   try{
-    const r = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ fn: fn, args: args }),
-      redirect: 'follow',
-      signal: ctrl.signal
-    });
-    if(!r.ok) throw new Error('HTTP ' + r.status);
-    const txt = await r.text();
-    let res;
-    try { res = JSON.parse(txt); }
-    catch(e){
-      throw new Error('Server tidak mengembalikan JSON. Cek: 1) doPost ada di Code.gs 2) Deploy sudah New version 3) Access = Anyone.');
+    if (HAS_GAS) {
+      return await new Promise(resolve => {
+        let done = false;
+        const t = setTimeout(() => { if(!done){ done = true; handleErr({message:'Timeout.'}, fn, resolve); } }, 45000);
+        google.script.run
+          .withSuccessHandler(res => { if(!done){ done = true; clearTimeout(t); handleRes(res, fn, resolve); } })
+          .withFailureHandler(err => { if(!done){ done = true; clearTimeout(t); handleErr(err, fn, resolve); } })
+          [fn](...args);
+      });
     }
-    return res;
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 45000);
+    try{
+      const r = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ fn: fn, args: args }),
+        redirect: 'follow',
+        signal: ctrl.signal
+      });
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      const txt = await r.text();
+      let res;
+      try { res = JSON.parse(txt); }
+      catch(e){ throw new Error('Server tidak mengembalikan JSON. Pastikan doPost ada & deployment: Execute as Me, access Anyone.'); }
+      return handleRes(res, fn, null) || res;
+    } finally { clearTimeout(to); }
   }catch(err){
-    const m = err.name === 'AbortError' ? 'Timeout — server tidak merespons.' : err.message;
-    toast('Koneksi API gagal: ' + m, true);
-    return { ok:false, msg:m };
+    return handleErr(err, fn, null) || { ok:false };
   }finally{
-    clearTimeout(to);
     showLoader(false);
   }
+}
+function handleRes(res, fn, resolve){
+  if (res && res.ok === false && res.msg && !SILENT_FNS[fn]) toast(res.msg, true);
+  if (resolve) resolve(res || { ok:false, msg:'Respons kosong' });
+  return null;
+}
+function handleErr(err, fn, resolve){
+  const m = (err && err.name === 'AbortError') ? 'Timeout — server tidak merespons.' : (err && err.message ? err.message : 'Kesalahan jaringan/server.');
+  if (!SILENT_FNS[fn]) toast('Koneksi API gagal: ' + m, true);
+  if (resolve) resolve({ ok:false, msg:m });
+  return null;
 }
 
 /* ================= WAKTU (sinkron server) ================= */
@@ -733,7 +760,7 @@ function tick(){
   const c = $('#clock'); if(c) c.textContent = pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
   const t = HARI[d.getDay()]+', '+d.getDate()+' '+BULAN[d.getMonth()]+' '+d.getFullYear();
   const cd = $('#clockDate'); if(cd) cd.textContent = t;
-  $('#topDate').textContent = t;
+  const td = $('#topDate'); if(td) td.textContent = t;
 }
 setInterval(tick, 1000);
 
@@ -987,7 +1014,7 @@ async function deleteIssue(id){
 /* ================= PRESENSI ================= */
 function getGPS(){
   return new Promise(res => {
-    if(!navigator.geolocation){ $('#gpsStatus').textContent='Perangkat tidak mendukung GPS.'; return res(null); }
+    if(!navigator.geolocation){ const g=$('#gpsStatus'); if(g) g.textContent='Perangkat tidak mendukung GPS.'; return res(null); }
     $('#gpsStatus').textContent = 'Mengambil lokasi...';
     navigator.geolocation.getCurrentPosition(
       p => { S.gps = { lat:p.coords.latitude.toFixed(6), lng:p.coords.longitude.toFixed(6), acc:Math.round(p.coords.accuracy) };
@@ -1349,10 +1376,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#btnSetSave').addEventListener('click', saveSettings);
   $('#btnGpsKantor').addEventListener('click', gpsKantor);
 
+  // sesi tersimpan
   const saved = store.get('co_user');
   if(saved){ try { S.user = JSON.parse(saved); } catch(e){ S.user = null; } }
   if(S.user && S.user.id) enterApp();
-  else $('#authScreen').classList.remove('hidden');
 });
 </script>
 </body>
