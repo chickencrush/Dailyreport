@@ -13,7 +13,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{--bg:#0b1120;--card:#121b2e;--line:#25324a;--txt:#e9eef9;--muted:#91a0ba;--pri:#7c8cff;
 --green:#35d095;--gbg:#14382f;--amber:#f7bd55;--abg:#3a2c16;--red:#ff668e;--rbg:#401b2a;
@@ -1505,8 +1504,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }catch(e){ toast('Google Sign-In gagal dimuat. Cek koneksi & Client ID.', true); }
   });
-  initGsiSafe();
-
+ 
   $('#btnMenu').addEventListener('click', () => {
     if(window.innerWidth > 850){
       const c = $('#sidebar').classList.toggle('collapsed');
