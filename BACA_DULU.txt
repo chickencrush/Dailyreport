@@ -1,7 +1,0 @@
-PERBAIKAN LOGIN /EXEC DAN GITHUB
-
-Apps Script: ganti SELURUH isi file HTML Index dengan Index.html paket ini. Simpan > Deploy > Manage deployments > Edit > New version > Deploy.
-GitHub: ganti index.html dan sw.js, lalu Commit dan reload setelah Pages selesai.
-Tampilan kini mendeteksi koneksi otomatis: /exec memakai google.script.run; GitHub memakai API POST.
-Code.gs tetap memakai versi API terbaru. Jangan menjalankan setupApp ulang; akun dan data lama dipertahankan.
-
